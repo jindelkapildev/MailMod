@@ -214,7 +214,7 @@ async def home():
     """
     return get_base_html(f"{bot_name} - Dashboard", homepage_content)
 
-# Single mail viewer endpoint (for the dynamic buttons)
+# Single mail viewer endpoint (Displays formatted HTML if available, fallbacks to raw text)
 @app.route('/view')
 async def view_mail():
     record_id = request.args.get('id')
@@ -234,19 +234,35 @@ async def view_mail():
         subject = record.get("subject") or "(No Subject)"
         sender = record.get("sender") or "Unknown Sender"
         recipient = record.get("recipient") or record.get("to") or "Unknown Recipient"
-        body = record.get("body_text") or record.get("raw_body") or "This email has no content."
-        date = record.get("created_at", "Unknown Date")[:16].replace("T", " ")
+        
+        # 1. Look for common HTML body database columns (Checks "body_html", then "html_body", then "html")
+        html_content = record.get("body_html") or record.get("html_body") or record.get("html")
+        
+        # 2. Plain text fallback if no rich HTML columns exist
+        plain_text_content = record.get("body_text") or record.get("raw_body") or "This email has no content."
+
+        # If rich HTML is present, render inside an isolated style card, otherwise render as text
+        if html_content:
+            mail_display = f"""
+            <div style="background: white; color: black; border-radius: 8px; padding: 20px; border: 1px solid var(--border-color); box-shadow: inset 0 0 10px rgba(0,0,0,0.05); overflow-x: auto;">
+                {html_content}
+            </div>
+            """
+        else:
+            mail_display = f"""
+            <div class="mail-body">{plain_text_content}</div>
+            """
 
         mail_content = f"""
         <div class="profile-card" style="text-align: left;">
             <span class="badge">SECURE MAIL READER</span>
             <div class="mail-header">
-                <h1 style="text-align: left; margin-bottom: 15px;">{subject}</h1>
+                <h1 style="text-align: left; margin-bottom: 15px; color: #fff;">{subject}</h1>
                 <div class="mail-meta"><strong>From:</strong> {sender}</div>
                 <div class="mail-meta"><strong>To:</strong> {recipient}</div>
-                <div class="mail-meta"><strong>Received:</strong> {date}</div>
+                <div class="mail-meta"><strong>Received:</strong> {record.get("created_at", "Unknown Date")[:16].replace("T", " ")}</div>
             </div>
-            <div class="mail-body">{body}</div>
+            {mail_display}
         </div>
         """
         return get_base_html(f"View Mail: {subject}", mail_content)

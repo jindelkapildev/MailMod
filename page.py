@@ -58,14 +58,66 @@ def get_base_html(title, content):
                 background: var(--card-bg);
                 border-radius: 16px;
                 padding: 30px;
+                text-align: center;
                 box-shadow: 0 10px 30px rgba(0,0,0,0.5);
                 border: 1px solid rgba(255,255,255,0.05);
                 margin-bottom: 24px;
             }}
+            .avatar {{
+                width: 100px;
+                height: 100px;
+                border-radius: 50%;
+                border: 4px solid var(--accent-color);
+                box-shadow: 0 0 20px rgba(78, 115, 223, 0.5);
+                margin-bottom: 15px;
+            }}
+            h1 {{ font-size: 2rem; margin: 10px 0 5px 0; }}
+            .status-badge {{
+                display: inline-flex;
+                align-items: center;
+                background: rgba(46, 204, 113, 0.1);
+                color: var(--success-color);
+                padding: 6px 16px;
+                border-radius: 20px;
+                font-size: 0.9rem;
+                font-weight: 600;
+                border: 1px solid rgba(46, 204, 113, 0.2);
+            }}
+            .status-dot {{
+                width: 8px;
+                height: 8px;
+                background-color: var(--success-color);
+                border-radius: 50%;
+                margin-right: 8px;
+                box-shadow: 0 0 10px var(--success-color);
+            }}
+            .stats-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                gap: 16px;
+            }}
+            .stat-card {{
+                background: var(--card-bg);
+                border-radius: 12px;
+                padding: 20px;
+                text-align: center;
+                border: 1px solid rgba(255,255,255,0.02);
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+                transition: transform 0.2s ease;
+            }}
+            .stat-card:hover {{
+                transform: translateY(-3px);
+                border-color: rgba(78, 115, 223, 0.3);
+            }}
+            .stat-value {{ font-size: 1.6rem; font-weight: bold; margin-bottom: 4px; }}
+            .stat-label {{ font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; }}
+            
+            /* Styles for Single Mail View */
             .mail-header {{
                 border-bottom: 1px solid var(--border-color);
                 padding-bottom: 20px;
                 margin-bottom: 20px;
+                text-align: left;
             }}
             .mail-meta {{
                 font-size: 0.9rem;
@@ -86,6 +138,7 @@ def get_base_html(title, content):
                 word-break: break-word;
                 border: 1px solid var(--border-color);
                 color: #e0e6ed;
+                text-align: left;
             }}
             .badge {{
                 display: inline-block;
@@ -97,7 +150,6 @@ def get_base_html(title, content):
                 font-weight: bold;
                 margin-bottom: 15px;
             }}
-            h1 {{ font-size: 1.8rem; margin: 10px 0; color: #fff; }}
             footer {{ text-align: center; margin-top: 30px; font-size: 0.8rem; color: var(--text-muted); }}
         </style>
     </head>
@@ -112,31 +164,57 @@ def get_base_html(title, content):
 
 @app.route('/')
 async def home():
+    # Gather live statistics from your Discord bot safely
     bot_name = bot.user.name if bot.user else "Mail Notification Bot"
     avatar_url = bot.user.avatar.url if bot.user and bot.user.avatar else "https://cdn.discordapp.com/embed/avatars/0.png"
     guild_count = len(bot.guilds)
     total_users = sum(g.member_count for g in bot.guilds) if bot.guilds else 0
     
+    # SAFE LATENCY CHECK (Prevents float NaN crashes)
     if bot.latency and not math.isnan(bot.latency):
         latency = round(bot.latency * 1000)
     else:
         latency = 0   
         
+    # Simple uptime calculation
     uptime_seconds = int(time.time() - START_TIME)
     uptime_hours = uptime_seconds // 3600
     uptime_mins = (uptime_seconds % 3600) // 60
     uptime_string = f"{uptime_hours}h {uptime_mins}m"
 
     homepage_content = f"""
-    <div class="profile-card" style="text-align: center;">
-        <img style="width: 100px; height: 100px; border-radius: 50%; border: 4px solid var(--accent-color); margin-bottom: 15px;" src="{avatar_url}" alt="Bot Avatar">
+    <div class="profile-card">
+        <img class="avatar" src="{avatar_url}" alt="Bot Avatar">
         <h1>{bot_name}</h1>
         <p style="color: var(--text-muted); margin-top: 0; margin-bottom: 20px;">Dedicated Mail Delivery System</p>
+        <div class="status-badge">
+            <span class="status-dot"></span>
+            ONLINE & OPERATIONAL
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-value">{guild_count}</div>
+            <div class="stat-label">Servers</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{total_users}</div>
+            <div class="stat-label">Users Tracking</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{latency}ms</div>
+            <div class="stat-label">Ping Latency</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value">{uptime_string}</div>
+            <div class="stat-label">Uptime</div>
+        </div>
     </div>
     """
     return get_base_html(f"{bot_name} - Dashboard", homepage_content)
 
-# NEW ROUTE: Displays the full mail content dynamically based on Supabase ID
+# Single mail viewer endpoint (for the dynamic buttons)
 @app.route('/view')
 async def view_mail():
     record_id = request.args.get('id')
@@ -160,10 +238,10 @@ async def view_mail():
         date = record.get("created_at", "Unknown Date")[:16].replace("T", " ")
 
         mail_content = f"""
-        <div class="profile-card">
+        <div class="profile-card" style="text-align: left;">
             <span class="badge">SECURE MAIL READER</span>
             <div class="mail-header">
-                <h1>{subject}</h1>
+                <h1 style="text-align: left; margin-bottom: 15px;">{subject}</h1>
                 <div class="mail-meta"><strong>From:</strong> {sender}</div>
                 <div class="mail-meta"><strong>To:</strong> {recipient}</div>
                 <div class="mail-meta"><strong>Received:</strong> {date}</div>

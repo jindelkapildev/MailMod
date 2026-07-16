@@ -4,7 +4,6 @@ import uuid
 import math
 from quart import Quart, request, render_template_string
 from bot_instance import bot  # Pulling bot instance safely
-from local_logger import save_to_history  # Import your existing db logic
 
 app = Quart(__name__)
 

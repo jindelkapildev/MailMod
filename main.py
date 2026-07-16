@@ -6,6 +6,7 @@ from bot_instance import bot
 # Import the web server task from your new page.py file
 from page import run_web_server
 import discord
+
 bot.intents.members = True
 
 load_dotenv()
@@ -41,5 +42,5 @@ if __name__ == "__main__":
     if not DISCORD_BOT_TOKEN:
         print("[Critical Error] DISCORD_BOT_TOKEN is missing from your .env file!")
     else:
-        # Start the bot using your token
+        # Start the bot directly without the automated Playwright installer
         bot.run(DISCORD_BOT_TOKEN)

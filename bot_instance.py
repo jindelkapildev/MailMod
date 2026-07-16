@@ -16,7 +16,6 @@ intents.message_content = True   # Required for prefix commands to read messages
 
 # 4. Initialize the Bot instance
 bot = commands.Bot(
-    command_prefix=prefixes,     # Now accepts any of the prefixes in the list
-    proxy=PROXY_URL,             # Routes Discord API traffic through a clean IP
+    command_prefix=prefixes,     # Now accepts any of the prefixes in the list             # Routes Discord API traffic through a clean IP
     intents=intents              # Passes the fully configured intents object
 )

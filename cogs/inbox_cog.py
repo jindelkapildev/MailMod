@@ -5,15 +5,15 @@ import discord
 from discord.ext import commands, tasks
 from supabase import create_client, Client
 
-# Configure your target Discord Channel ID where new mails should automatically post
-NOTIFY_CHANNEL_ID = 1521142308966371332  # 👈 Replace with actual Channel ID
+# Configure your target Discord Channel ID (where the threads will live)
+NOTIFY_CHANNEL_ID = 1527301001651028199  # 👈 Keep your channel ID here
 
 class MailLinkButton(discord.ui.View):
     """Adds a dynamic link button below the embed targeting your dashboard."""
     def __init__(self, record_id):
         super().__init__()
         # Fetch dashboard URL from environment variables, fallback to localhost for testing
-        base_url = os.getenv("DASHBOARD_URL", "https://mailmod.onrender.com")
+        base_url = os.getenv("DASHBOARD_URL", "http://localhost:8080")
         dashboard_url = f"{base_url.rstrip('/')}/view?id={record_id}"
         
         self.add_item(discord.ui.Button(
@@ -59,6 +59,42 @@ class InboxCog(commands.Cog):
             return "Sender's Name", raw_sender.strip()
         
         return raw_sender.strip(), "info@mail.admin.com"
+
+    def clean_recipient_name(self, raw_recipient):
+        """Extracts just the clean email address (e.g. info@mail.discord.com) to use as the thread name."""
+        if not raw_recipient:
+            return "unknown-recipient"
+        match = re.search(r'<([^>]+)>', raw_recipient)
+        if match:
+            return match.group(1).strip().lower()
+        return raw_recipient.strip().lower()
+
+    async def get_or_create_mail_thread(self, channel, thread_name):
+        """
+        Searches both active and archived threads for the email name.
+        If found, returns it (unarchiving it if necessary). Otherwise, spawns a new thread.
+        """
+        # 1. Look through currently active threads
+        for thread in channel.threads:
+            if thread.name.lower() == thread_name:
+                return thread
+
+        # 2. Look through archived threads
+        try:
+            async for thread in channel.archived_threads(limit=100):
+                if thread.name.lower() == thread_name:
+                    await thread.edit(archived=False)  # Unarchive it so we can post
+                    return thread
+        except Exception as e:
+            print(f"⚠️ Error scanning archived threads: {e}")
+
+        # 3. Create a new thread if no matching thread was found
+        new_thread = await channel.create_thread(
+            name=thread_name,
+            type=discord.ChannelType.public_thread,
+            auto_archive_duration=1440 # 24 Hours
+        )
+        return new_thread
 
     def create_mail_embed(self, record, current_index, total_count):
         """Builds a light embed without the massive body content."""
@@ -136,10 +172,17 @@ class InboxCog(commands.Cog):
 
                 channel = self.bot.get_channel(NOTIFY_CHANNEL_ID)
                 if channel:
+                    # Clean up recipient address to use as the thread title
+                    raw_recipient = latest_record.get("recipient") or latest_record.get("to") or ""
+                    thread_name = self.clean_recipient_name(raw_recipient)
+
+                    # Get existing thread or create a new one dynamically
+                    target_thread = await self.get_or_create_mail_thread(channel, thread_name)
+
                     embed = self.create_mail_embed(latest_record, 0, 1)
                     view = MailLinkButton(record_id=record_id)
                     
-                    await channel.send(
+                    await target_thread.send(
                         content=f"📬 **New email from {latest_record.get('sender', 'Unknown')}**", 
                         embed=embed, 
                         view=view
@@ -153,7 +196,7 @@ class InboxCog(commands.Cog):
 
     @commands.command(name="latest_mail", aliases=["inbox"])
     async def get_latest_mail(self, ctx):
-        """Fetches the absolute newest entry manually."""
+        """Fetches the absolute newest entry manually and routes it to its thread."""
         if not self.supabase:
             return await ctx.send("❌ Supabase client is not configured properly.")
 
@@ -164,10 +207,17 @@ class InboxCog(commands.Cog):
                     return await ctx.send("📭 The inbox database is currently empty.")
                 
                 record = response.data[0]
+                raw_recipient = record.get("recipient") or record.get("to") or ""
+                thread_name = self.clean_recipient_name(raw_recipient)
+
+                # Get thread in the command's channel
+                target_thread = await self.get_or_create_mail_thread(ctx.channel, thread_name)
+
                 embed = self.create_mail_embed(record, 0, 1)
                 view = MailLinkButton(record_id=record.get("id", "0"))
                 
-                await ctx.send(embed=embed, view=view)
+                await target_thread.send(embed=embed, view=view)
+                await ctx.send(f"✅ Routed latest email to thread: {target_thread.mention}")
             except Exception as e:
                 print(f"❌ Error: {e}")
                 await ctx.send("⚠️ An error occurred while fetching data.")
@@ -187,9 +237,14 @@ class InboxCog(commands.Cog):
                     return await ctx.send("📭 No historical emails found in the database.")
                 
                 if len(records) == 1:
+                    raw_recipient = records[0].get("recipient") or records[0].get("to") or ""
+                    thread_name = self.clean_recipient_name(raw_recipient)
+                    target_thread = await self.get_or_create_mail_thread(ctx.channel, thread_name)
+
                     embed = self.create_mail_embed(records[0], 0, 1)
                     view = MailLinkButton(record_id=records[0].get("id", "0"))
-                    await ctx.send(embed=embed, view=view)
+                    await target_thread.send(embed=embed, view=view)
+                    await ctx.send(f"✅ Routed history to thread: {target_thread.mention}")
                     return
 
             except Exception as e:

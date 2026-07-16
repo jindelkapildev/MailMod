@@ -13,7 +13,7 @@ class MailLinkButton(discord.ui.View):
     def __init__(self, record_id):
         super().__init__()
         # Fetch dashboard URL from environment variables, fallback to localhost for testing
-        base_url = os.getenv("DASHBOARD_URL", "http://localhost:8080")
+        base_url = os.getenv("DASHBOARD_URL", "https://mailmod.onrender.com")
         dashboard_url = f"{base_url.rstrip('/')}/view?id={record_id}"
         
         self.add_item(discord.ui.Button(

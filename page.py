@@ -1,17 +1,22 @@
 import os
 import time
-import uuid
 import math
-from quart import Quart, request, render_template_string
+from quart import Quart, render_template_string, request
 from bot_instance import bot  # Pulling bot instance safely
+from supabase import create_client, Client
 
 app = Quart(__name__)
 
 # Track when the dashboard script loaded
 START_TIME = time.time()
 
-# A dictionary to temporarily hold valid tokens and track channel info
-ACTIVE_TOKENS = {}
+# Initialize Supabase Client inside page.py to fetch mail details for the web view
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_KEY")
+supabase: Client = None
+
+if supabase_url and supabase_key:
+    supabase = create_client(supabase_url, supabase_key)
 
 # Reusable template wrapper to keep the theme identical across all pages
 def get_base_html(title, content):
@@ -30,9 +35,8 @@ def get_base_html(title, content):
                 --success-color: #2ecc71;
                 --text-color: #f8f9fc;
                 --text-muted: #a0aec0;
-                --danger-color: #e74c3c;
+                --border-color: rgba(255, 255, 255, 0.08);
             }}
-            
             body {{
                 font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                 background-color: var(--bg-color);
@@ -44,151 +48,63 @@ def get_base_html(title, content):
                 align-items: center;
                 min-height: 100vh;
             }}
-
             .container {{
                 width: 100%;
                 max-width: 800px;
                 padding: 20px;
                 box-sizing: border-box;
             }}
-
             .profile-card {{
                 background: var(--card-bg);
                 border-radius: 16px;
                 padding: 30px;
-                text-align: center;
                 box-shadow: 0 10px 30px rgba(0,0,0,0.5);
                 border: 1px solid rgba(255,255,255,0.05);
                 margin-bottom: 24px;
             }}
-
-            .avatar {{
-                width: 100px;
-                height: 100px;
-                border-radius: 50%;
-                border: 4px solid var(--accent-color);
-                box-shadow: 0 0 20px rgba(78, 115, 223, 0.5);
-                margin-bottom: 15px;
+            .mail-header {{
+                border-bottom: 1px solid var(--border-color);
+                padding-bottom: 20px;
+                margin-bottom: 20px;
             }}
-
-            h1, h2 {{
-                margin: 10px 0 5px 0;
-                letter-spacing: 0.5px;
-            }}
-            
-            h1 {{ font-size: 2rem; }}
-            h2 {{ font-size: 1.5rem; color: #4fffc0; text-align: left; margin-bottom: 15px; }}
-
-            .status-badge {{
-                display: inline-flex;
-                align-items: center;
-                background: rgba(46, 204, 113, 0.1);
-                color: var(--success-color);
-                padding: 6px 16px;
-                border-radius: 20px;
+            .mail-meta {{
                 font-size: 0.9rem;
-                font-weight: 600;
-                letter-spacing: 0.5px;
-                border: 1px solid rgba(46, 204, 113, 0.2);
-            }}
-
-            .status-dot {{
-                width: 8px;
-                height: 8px;
-                background-color: var(--success-color);
-                border-radius: 50%;
-                margin-right: 8px;
-                box-shadow: 0 0 10px var(--success-color);
-            }}
-
-            .stats-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-                gap: 16px;
-            }}
-
-            .stat-card {{
-                background: var(--card-bg);
-                border-radius: 12px;
-                padding: 20px;
-                text-align: center;
-                border: 1px solid rgba(255,255,255,0.02);
-                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-                transition: transform 0.2s ease;
-            }}
-
-            .stat-card:hover {{
-                transform: translateY(-3px);
-                border-color: rgba(78, 115, 223, 0.3);
-            }}
-
-            .stat-value {{
-                font-size: 1.6rem;
-                font-weight: bold;
-                color: var(--text-color);
-                margin-bottom: 4px;
-            }}
-
-            .stat-label {{
-                font-size: 0.85rem;
                 color: var(--text-muted);
-                text-transform: uppercase;
-                letter-spacing: 1px;
+                margin: 5px 0;
             }}
-
-            /* Push Portal Specific Elements */
-            textarea {{
-                width: 100%;
-                height: 350px;
-                background-color: #121420;
-                color: #00ff66;
-                border: 1px solid rgba(255,255,255,0.1);
+            .mail-meta strong {{
+                color: var(--text-color);
+            }}
+            .mail-body {{
+                background: #121420;
                 border-radius: 8px;
-                padding: 15px;
-                font-family: monospace;
-                font-size: 14px;
-                box-sizing: border-box;
-                resize: vertical;
+                padding: 20px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 0.95rem;
+                line-height: 1.6;
+                white-space: pre-wrap;
+                word-break: break-word;
+                border: 1px solid var(--border-color);
+                color: #e0e6ed;
+            }}
+            .badge {{
+                display: inline-block;
+                background: var(--accent-color);
+                color: #fff;
+                padding: 4px 10px;
+                border-radius: 4px;
+                font-size: 0.8rem;
+                font-weight: bold;
                 margin-bottom: 15px;
             }}
-            
-            textarea:focus {{
-                outline: none;
-                border-color: var(--accent-color);
-                box-shadow: 0 0 10px rgba(78, 115, 223, 0.3);
-            }}
-
-            button {{
-                background-color: var(--accent-color);
-                color: white;
-                border: none;
-                padding: 14px 24px;
-                font-size: 16px;
-                font-weight: bold;
-                border-radius: 8px;
-                cursor: pointer;
-                width: 100%;
-                transition: background 0.2s, transform 0.1s;
-                box-shadow: 0 4px 15px rgba(78, 115, 223, 0.3);
-            }}
-            
-            button:hover {{ background-color: #355bc7; transform: translateY(-1px); }}
-            button:active {{ transform: translateY(1px); }}
-
-            footer {{
-                text-align: center;
-                margin-top: 30px;
-                font-size: 0.8rem;
-                color: var(--text-muted);
-            }}
+            h1 {{ font-size: 1.8rem; margin: 10px 0; color: #fff; }}
+            footer {{ text-align: center; margin-top: 30px; font-size: 0.8rem; color: var(--text-muted); }}
         </style>
     </head>
     <body>
         <div class="container">
             {content}
-            <footer>
-                Powered by Quart & Render Async Architecture
-            </footer>
+            <footer>Powered by Quart Async Engine</footer>
         </div>
     </body>
     </html>
@@ -196,142 +112,70 @@ def get_base_html(title, content):
 
 @app.route('/')
 async def home():
-    # Gather live statistics from your Discord bot safely
-    bot_name = bot.user.name if bot.user else "Clan War Tracker"
+    bot_name = bot.user.name if bot.user else "Mail Notification Bot"
     avatar_url = bot.user.avatar.url if bot.user and bot.user.avatar else "https://cdn.discordapp.com/embed/avatars/0.png"
     guild_count = len(bot.guilds)
     total_users = sum(g.member_count for g in bot.guilds) if bot.guilds else 0
     
-    # SAFE LATENCY CHECK (Prevents float NaN crashes)
     if bot.latency and not math.isnan(bot.latency):
         latency = round(bot.latency * 1000)
     else:
         latency = 0   
         
-    # Simple uptime calculation
     uptime_seconds = int(time.time() - START_TIME)
     uptime_hours = uptime_seconds // 3600
     uptime_mins = (uptime_seconds % 3600) // 60
     uptime_string = f"{uptime_hours}h {uptime_mins}m"
 
     homepage_content = f"""
-    <div class="profile-card">
-        <img class="avatar" src="{avatar_url}" alt="Bot Avatar">
+    <div class="profile-card" style="text-align: center;">
+        <img style="width: 100px; height: 100px; border-radius: 50%; border: 4px solid var(--accent-color); margin-bottom: 15px;" src="{avatar_url}" alt="Bot Avatar">
         <h1>{bot_name}</h1>
-        <p style="color: var(--text-muted); margin-top: 0; margin-bottom: 20px;">Clash of Clans Tracker</p>
-        <div class="status-badge">
-            <span class="status-dot"></span>
-            ONLINE & OPERATIONAL
-        </div>
-    </div>
-
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-value">{guild_count}</div>
-            <div class="stat-label">Servers</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{total_users}</div>
-            <div class="stat-label">Users Tracking</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{latency}ms</div>
-            <div class="stat-label">Ping Latency</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">{uptime_string}</div>
-            <div class="stat-label">Uptime</div>
-        </div>
+        <p style="color: var(--text-muted); margin-top: 0; margin-bottom: 20px;">Dedicated Mail Delivery System</p>
     </div>
     """
     return get_base_html(f"{bot_name} - Dashboard", homepage_content)
 
-# GET Route: Displays the Unlimited Submission Text Portal
-@app.route('/push/<token>', methods=['GET'])
-async def view_push_page(token):
-    if token not in ACTIVE_TOKENS:
-        error_content = """
-        <div class="profile-card" style="border-color: var(--danger-color);">
-            <h1 style="color: var(--danger-color); font-size: 3.5rem; margin-bottom: 10px;">❌</h1>
-            <h1>Link Expired or Invalid</h1>
-            <p style="color: var(--text-muted); margin-top: 15px;">Please generate a fresh temporary transmission link using <code>?push</code> in Discord.</p>
-        </div>
-        """
-        return get_base_html("Link Expired - ClashHunt", error_content), 403
-
-    portal_content = """
-    <div class="profile-card" style="text-align: left;">
-        <h2>🌐 ClashHunt Data Submission Portal</h2>
-        <p style="color: var(--text-muted); font-size: 0.95rem; margin-bottom: 25px; line-height: 1.5;">
-            Paste your raw JSON data string inside the entry window below. Because this submission runs over direct HTTP streams, there are absolutely <b>no size or character limitations</b>.
-        </p>
-        <form method="POST">
-            <textarea name="json_data" placeholder="Paste your raw JSON content here..." required></textarea>
-            <button type="submit">🚀 Sync data to MongoDB Database</button>
-        </form>
-        <p style="color: var(--text-muted); font-size: 0.8rem; text-align: center; margin-top: 15px; margin-bottom: 0;">
-            ⚠️ This secure link will destroy itself automatically immediately upon submission or after 10 minutes.
-        </p>
-    </div>
-    """
-    return get_base_html("Submit Data - ClashHunt", portal_content)
-
-# POST Route: Processes the massive JSON data string
-@app.route('/push/<token>', methods=['POST'])
-async def handle_push_submit(token):
-    if token not in ACTIVE_TOKENS:
-        error_content = """
-        <div class="profile-card" style="border-color: var(--danger-color);">
-            <h1>❌ Access Terminated</h1>
-        </div>
-        """
-        return get_base_html("Error - ClashHunt", error_content), 403
-    
-    form = await request.form
-    raw_data = form.get("json_data", "").strip()
-    
-    # Extract channel reference info before revoking the token access
-    ctx_info = ACTIVE_TOKENS.pop(token) 
-    
-    if not raw_data:
-        error_content = """
-        <div class="profile-card" style="border-color: var(--danger-color);">
-            <h1>❌ Submission Rejected</h1>
-            <p style="color: var(--text-muted);">Data payload cannot be empty.</p>
-        </div>
-        """
-        return get_base_html("Failed - ClashHunt", error_content), 400
+# NEW ROUTE: Displays the full mail content dynamically based on Supabase ID
+@app.route('/view')
+async def view_mail():
+    record_id = request.args.get('id')
+    if not record_id:
+        return "Missing mail ID parameter.", 400
+        
+    if not supabase:
+        return "Supabase is not configured on the web server.", 500
 
     try:
-        # Fire off your local_logger parsing loop
-        save_to_history(raw_data)
-        
-        # Ping the originating discord channel asynchronously to announce success
-        channel = bot.get_channel(ctx_info["channel_id"])
-        if channel:
-            bot.loop.create_task(
-                channel.send(f"✅ **Web Sync Complete:** Giant raw data string submitted by <@{ctx_info['author_id']}> processed successfully and synced to MongoDB!")
-            )
+        # Fetch the mail record from Supabase
+        response = supabase.table("inbox").select("*").eq("id", record_id).execute()
+        if not response.data:
+            return "Mail record not found.", 404
+            
+        record = response.data[0]
+        subject = record.get("subject") or "(No Subject)"
+        sender = record.get("sender") or "Unknown Sender"
+        recipient = record.get("recipient") or record.get("to") or "Unknown Recipient"
+        body = record.get("body_text") or record.get("raw_body") or "This email has no content."
+        date = record.get("created_at", "Unknown Date")[:16].replace("T", " ")
 
-        success_content = """
-        <div class="profile-card" style="border-color: var(--success-color);">
-            <h1 style="color: var(--success-color); font-size: 3.5rem; margin-bottom: 10px;">✅</h1>
-            <h1>Data Synchronized!</h1>
-            <p style="color: var(--text-muted); margin-top: 15px;">Your local configurations and MongoDB cluster were successfully updated. You can now close this browser tab.</p>
+        mail_content = f"""
+        <div class="profile-card">
+            <span class="badge">SECURE MAIL READER</span>
+            <div class="mail-header">
+                <h1>{subject}</h1>
+                <div class="mail-meta"><strong>From:</strong> {sender}</div>
+                <div class="mail-meta"><strong>To:</strong> {recipient}</div>
+                <div class="mail-meta"><strong>Received:</strong> {date}</div>
+            </div>
+            <div class="mail-body">{body}</div>
         </div>
         """
-        return get_base_html("Success - ClashHunt", success_content)
+        return get_base_html(f"View Mail: {subject}", mail_content)
 
     except Exception as e:
-        failure_content = f"""
-        <div class="profile-card" style="border-color: var(--danger-color);">
-            <h1 style="color: var(--danger-color);">❌ Database Synced Error</h1>
-            <p style="color: var(--text-muted); font-family: monospace; font-size: 0.9rem; background: #121420; padding: 15px; border-radius: 6px; text-align: left; overflow-x: auto;">{str(e)}</p>
-        </div>
-        """
-        return get_base_html("Execution Failed - ClashHunt", failure_content), 500
+        return f"Error loading mail content: {str(e)}", 500
 
-# Server execution loop initialized dynamically inside main.py
 async def run_web_server():
     port = int(os.environ.get("PORT", 8080))
     await app.run_task(host="0.0.0.0", port=port)

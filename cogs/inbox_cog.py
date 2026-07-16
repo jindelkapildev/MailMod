@@ -8,12 +8,20 @@ from supabase import create_client, Client
 # Configure your target Discord Channel ID (where the threads will live)
 NOTIFY_CHANNEL_ID = 1527301001651028199  # 👈 Keep your channel ID here
 
+# Configure the exact Role IDs of your Admin and Owner roles (Numbers, no quotes)
+# This prevents users from breaking the bot if they rename the roles in Discord.
+ROLES_TO_ADD_IDS = [
+    1519709968847081675  # 👈 Replace with your actual Admin Role ID
+       # 👈 Replace with your actual Owner Role ID
+]
+
 class MailLinkButton(discord.ui.View):
     """Adds a dynamic link button below the embed targeting your dashboard."""
     def __init__(self, record_id):
         super().__init__()
         # Fetch dashboard URL from environment variables, fallback to localhost for testing
-        base_url = os.getenv("DASHBOARD_URL", "http://localhost:8080")
+        base_url = os.getenv("DASHBOARD_URL", "https://mailmod.onrender.com")
+        # Now routes using the secure, unguessable UUID string
         dashboard_url = f"{base_url.rstrip('/')}/view?id={record_id}"
         
         self.add_item(discord.ui.Button(
@@ -61,28 +69,37 @@ class InboxCog(commands.Cog):
         return raw_sender.strip(), "info@mail.admin.com"
 
     def clean_recipient_name(self, raw_recipient):
-        """Extracts just the clean email address (e.g. info@mail.discord.com) to use as the thread name."""
+        """
+        Extracts clean email address & prefixes it with 'admin - '
+        Example: info@mail.discord.com -> admin - info@mail.discord.com
+        """
         if not raw_recipient:
-            return "unknown-recipient"
-        match = re.search(r'<([^>]+)>', raw_recipient)
-        if match:
-            return match.group(1).strip().lower()
-        return raw_recipient.strip().lower()
+            email_addr = "unknown-recipient"
+        else:
+            match = re.search(r'<([^>]+)>', raw_recipient)
+            if match:
+                email_addr = match.group(1).strip().lower()
+            else:
+                email_addr = raw_recipient.strip().lower()
+        
+        # Prefixes the thread name so they always display cleanly with the "admin" tag
+        return f"admin - {email_addr}"
 
     async def get_or_create_mail_thread(self, channel, thread_name):
         """
         Searches both active and archived threads for the email name.
-        If found, returns it (unarchiving it if necessary). Otherwise, spawns a new thread.
+        If found, returns it (unarchiving it if necessary). Otherwise, spawns a new thread 
+        and silently adds all members who possess the target staff roles by ID.
         """
         # 1. Look through currently active threads
         for thread in channel.threads:
-            if thread.name.lower() == thread_name:
+            if thread.name.lower() == thread_name.lower():
                 return thread
 
         # 2. Look through archived threads
         try:
             async for thread in channel.archived_threads(limit=100):
-                if thread.name.lower() == thread_name:
+                if thread.name.lower() == thread_name.lower():
                     await thread.edit(archived=False)  # Unarchive it so we can post
                     return thread
         except Exception as e:
@@ -92,8 +109,24 @@ class InboxCog(commands.Cog):
         new_thread = await channel.create_thread(
             name=thread_name,
             type=discord.ChannelType.public_thread,
-            auto_archive_duration=1440 # 24 Hours
+            auto_archive_duration=1440 # 24 Hours (1 Day)
         )
+
+        # 4. SILENTLY ADD MEMBERS WITH SPECIFIED ROLE IDs (No notifications/pings sent)
+        guild = channel.guild
+        added_members = set()  # Track to prevent adding duplicate users with multiple roles
+        
+        for role_id in ROLES_TO_ADD_IDS:
+            role = guild.get_role(role_id)
+            if role:
+                for member in role.members:
+                    if member.id not in added_members and not member.bot:
+                        try:
+                            await new_thread.add_user(member)
+                            added_members.add(member.id)
+                        except Exception as e:
+                            print(f"⚠️ Could not silently add {member.name} to thread: {e}")
+
         return new_thread
 
     def create_mail_embed(self, record, current_index, total_count):
@@ -161,7 +194,7 @@ class InboxCog(commands.Cog):
                 return
 
             latest_record = response.data[0]
-            record_id = latest_record.get("id")
+            record_id = latest_record.get("id")  # This will now fetch a secure UUID string!
 
             if self.last_checked_id is None:
                 self.last_checked_id = record_id
@@ -176,14 +209,14 @@ class InboxCog(commands.Cog):
                     raw_recipient = latest_record.get("recipient") or latest_record.get("to") or ""
                     thread_name = self.clean_recipient_name(raw_recipient)
 
-                    # Get existing thread or create a new one dynamically
+                    # Get existing thread or create a new one dynamically (silently adding roles)
                     target_thread = await self.get_or_create_mail_thread(channel, thread_name)
 
                     embed = self.create_mail_embed(latest_record, 0, 1)
                     view = MailLinkButton(record_id=record_id)
                     
                     await target_thread.send(
-                        content=f"📬 **New email from {latest_record.get('sender', 'Unknown')}**", 
+                        # content=f"📬 **New email from {latest_record.get('sender', 'Unknown')}**", 
                         embed=embed, 
                         view=view
                     )

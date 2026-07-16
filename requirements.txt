@@ -3,3 +3,4 @@ aiohttp
 dotenv
 motor
 quart
+supabase

@@ -19,14 +19,14 @@ class SyncCog(commands.Cog):
         else:
             self.supabase: Client = create_client(self.supabase_url, self.supabase_key)
         
-        # Cloudflare D1 configuration[cite: 1]
-        self.cf_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")[cite: 1]
-        self.cf_database_id = os.getenv("CLOUDFLARE_DATABASE_ID")[cite: 1]
-        self.cf_api_token = os.getenv("CLOUDFLARE_API_TOKEN")[cite: 1]
+        # Cloudflare D1 configuration
+        self.cf_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        self.cf_database_id = os.getenv("CLOUDFLARE_DATABASE_ID")
+        self.cf_api_token = os.getenv("CLOUDFLARE_API_TOKEN")
         
         # Setup the D1 REST API Endpoint URL
         if self.cf_account_id and self.cf_database_id:
-            self.d1_api_url = f"https://api.cloudflare.com/client/v4/accounts/{self.cf_account_id}/d1/database/{self.cf_database_id}/query"[cite: 1]
+            self.d1_api_url = f"https://api.cloudflare.com/client/v4/accounts/{self.cf_account_id}/d1/database/{self.cf_database_id}/query"
         else:
             self.d1_api_url = None
             print("⚠️ [Sync Cog] Missing Cloudflare D1 environment variables!")

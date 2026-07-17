@@ -199,7 +199,7 @@ def get_base_html(title, content):
 async def home():
     # Gather live statistics from your Discord bot safely
     bot_name = bot.user.name if bot.user else "Mail Notification Bot"
-    avatar_url = bot.user.avatar.url if bot.user and bot.user.avatar else "https://cdn.discordapp.com/embed/avatars/0.png"
+    avatar_url = bot.user.avatar.url if bot.user and bot.user.avatar else "https://cdn.discordapp.com/avatars/1521134487755559033/e3c4527f523d22156fee919862f1b80f.webp"
     guild_count = len(bot.guilds)
     total_users = sum(g.member_count for g in bot.guilds) if bot.guilds else 0
     

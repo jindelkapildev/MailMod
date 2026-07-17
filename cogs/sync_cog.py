@@ -26,7 +26,7 @@ class SyncCog(commands.Cog):
         
         # Setup the D1 REST API Endpoint URL
         if self.cf_account_id and self.cf_database_id:
-            self.d1_api_url = f"https://api.cloudflare.com/client/v4/accounts/{self.cf_account_id}/d1/database/{self.cf_database_id}/query"
+            self.d1_api_url = f"https://api.cloudflare.com/client/v4/accounts/{self.cf_account_id}/d1/database/{self.cf_database_id}/query"[cite: 1]
         else:
             self.d1_api_url = None
             print("⚠️ [Sync Cog] Missing Cloudflare D1 environment variables!")
@@ -58,31 +58,33 @@ class SyncCog(commands.Cog):
                 return result
 
     @commands.command(name="sync")
-    @commands.has_permissions(administrator=True) # Recommended safety net
+    @commands.has_permissions(administrator=True)
     async def sync_database(self, ctx):
-        """Manually forces a step-by-step batch migration from Supabase to Cloudflare D1."""
+        """
+        Safely migrates entries one by one:
+        Copies from Supabase -> Pastes to Cloudflare D1 -> Deletes from Supabase.
+        """
         if not self.supabase:
             return await ctx.send("❌ Supabase is not configured.")
         if not self.d1_api_url:
             return await ctx.send("❌ Cloudflare D1 is not configured.")
 
-        # 1. Look for a tracking column like 'is_synced'. 
-        # Note: If you do not have 'is_synced' in Supabase, make sure to add it 
-        # to your 'inbox' table as a boolean (DEFAULT false).
+        status_msg = await ctx.send("🔄 **Sync Initiated.** Starting secure one-by-one migration...")
+        total_moved = 0
         
-        status_msg = await ctx.send("🔄 **Sync Initiated.** Checking database for unsynced entries...")
-        total_synced = 0
-        batch_size = 100
+        # We fetch in small batches from Supabase to reduce network calls,
+        # but we still process and delete them ONE-BY-ONE sequentially.
+        batch_size = 50 
         has_more = True
 
         async with ctx.typing():
             try:
                 while has_more:
-                    # Fetch next batch of unsynced rows from Supabase
+                    # Fetch oldest records first so we migrate in chronological order
                     response = (
                         self.supabase.table("inbox")
                         .select("*")
-                        .eq("is_synced", False)
+                        .order("created_at", desc=False)
                         .limit(batch_size)
                         .execute()
                     )
@@ -92,10 +94,8 @@ class SyncCog(commands.Cog):
                         has_more = False
                         break
 
-                    # Process each record to build a bulk SQL script or run sequential insertions.
-                    # Since D1 REST API allows parameterized execution, we construct parameterized inserts.
                     for record in records:
-                        # Convert attachments list to text for SQLite storage
+                        record_id = record.get("id")
                         attachments_json = json.dumps(record.get("attachments", []))
                         
                         insert_sql = """
@@ -106,7 +106,7 @@ class SyncCog(commands.Cog):
                         """
                         
                         params = [
-                            record.get("id"),
+                            record_id,
                             record.get("created_at"),
                             record.get("sender"),
                             record.get("recipient") or record.get("to"),
@@ -119,28 +119,39 @@ class SyncCog(commands.Cog):
                             record.get("uid")
                         ]
                         
-                        # Executing query over Cloudflare HTTP interface
-                        await self.execute_d1_query(insert_sql, params)
+                        try:
+                            # 1. COPY: Write to Cloudflare D1
+                            await self.execute_d1_query(insert_sql, params)
+                            
+                            # 2. DELETE: Remove from Supabase ONLY after D1 write is confirmed successful
+                            self.supabase.table("inbox").delete().eq("id", record_id).execute()
+                            
+                            total_moved += 1
+                            
+                            # Edit message occasionally to show progress without spamming Discord's API rate limits
+                            if total_moved % 5 == 0 or total_moved == 1:
+                                await status_msg.edit(content=f"⚙️ **Migrating...** Safely moved `{total_moved}` records to Cloudflare.")
+                            
+                            # Extremely brief pause to keep things smooth
+                            await asyncio.sleep(0.1)
+                            
+                        except Exception as single_err:
+                            # If a single row fails to write, we stop the sync immediately.
+                            # The row remains safe in Supabase.
+                            print(f"❌ Failed to migrate record ID {record_id}: {single_err}")
+                            await ctx.send(f"⚠️ **Sync paused mid-process due to an error at ID {record_id}:**\n`{str(single_err)}`")
+                            has_more = False
+                            break
 
-                    # Update Supabase for this specific batch so we don't query them again
-                    ids_to_update = [r.get("id") for r in records]
-                    self.supabase.table("inbox").update({"is_synced": True}).in_("id", ids_to_update).execute()
-
-                    total_synced += len(records)
-                    await status_msg.edit(content=f"⚙️ **Syncing...** Successfully processed `{total_synced}` records so far.")
-                    
-                    # Prevent rapid hammering of both databases
-                    await asyncio.sleep(1.0)
-
-                # Final Success Message
-                if total_synced > 0:
-                    await status_msg.edit(content=f"✅ **Sync completed successfully!**\nMoved `{total_synced}` mail records over to Cloudflare D1.")
+                # Final Status Update
+                if total_moved > 0:
+                    await status_msg.edit(content=f"✅ **Storage Cleaned!**\nSuccessfully moved and cleared `{total_moved}` mail records from Supabase into Cloudflare D1.")
                 else:
-                    await status_msg.edit(content="📭 **Sync completed.** There were no new unsynced entries to transfer.")
+                    await status_msg.edit(content="📭 **Sync complete.** Supabase is already clean—no records found to migrate.")
 
             except Exception as e:
-                print(f"❌ Error during sync execution: {e}")
-                await ctx.send(f"⚠️ **Sync aborted due to an error:**\n`{str(e)}`")
+                print(f"❌ Global Sync Error: {e}")
+                await ctx.send(f"⚠️ **Sync aborted due to a global error:**\n`{str(e)}`")
 
 async def setup(bot):
     await bot.add_cog(SyncCog(bot))

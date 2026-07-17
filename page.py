@@ -58,7 +58,8 @@ def get_base_html(title, content):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>{{title}}</title>
+        <title>{title}</title>
+        <link rel="icon" type="image/x-icon" href="{avatar_url}">
         <style>
             :root {{
                 --bg-color: #0f111a;

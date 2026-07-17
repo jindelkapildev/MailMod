@@ -194,7 +194,7 @@ class InboxCog(commands.Cog):
                 return
 
             latest_record = response.data[0]
-            record_id = latest_record.get("id")  # This will now fetch a secure UUID string!
+            record_id = latest_record.get("uid")  # This will now fetch a secure UUID string!
 
             if self.last_checked_id is None:
                 self.last_checked_id = record_id

@@ -11,10 +11,9 @@ ROLES_TO_ADD_IDS = [1519709968847081675]
 
 class MailLinkButton(discord.ui.View):
     """Adds a dynamic link button below the embed targeting your dashboard."""
-    def __init__(self, record_uid):  # Changed parameter to match UUID column name
+    def __init__(self, record_uid):
         super().__init__()
         base_url = os.getenv("DASHBOARD_URL", "https://mailmod.onrender.com")
-        # Route using the secure, unguessable UUID string (uid)
         dashboard_url = f"{base_url.rstrip('/')}/view?id={record_uid}"
         
         self.add_item(discord.ui.Button(
@@ -27,7 +26,7 @@ class MailLinkButton(discord.ui.View):
 class InboxCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.last_checked_uid = None  # Tracks by UUID instead of numerical ID
+        self.last_checked_uid = None  
         
         # Initialize Supabase Client
         supabase_url = os.getenv("SUPABASE_URL")
@@ -91,15 +90,21 @@ class InboxCog(commands.Cog):
         return f"admin - {email_addr}"
 
     async def get_or_create_mail_thread(self, channel, thread_name):
+        # 1. Search locally cached active threads (NO API calls)
         for thread in channel.threads:
-            if thread.name.lower() == thread_name.lower(): return thread
+            if thread.name.lower() == thread_name.lower(): 
+                return thread
+
+        # 2. Only if not active, check archived threads (Rate limit danger zone)
         try:
-            async for thread in channel.archived_threads(limit=100):
+            async for thread in channel.archived_threads(limit=20): # Lowered limit from 100 to 20 to preserve requests
                 if thread.name.lower() == thread_name.lower():
                     await thread.edit(archived=False)
                     return thread
-        except Exception as e: print(f"⚠️ Thread scan error: {e}")
+        except Exception as e: 
+            print(f"⚠️ Thread scan error: {e}")
 
+        # 3. Create thread if not found anywhere
         new_thread = await channel.create_thread(name=thread_name, type=discord.ChannelType.public_thread, auto_archive_duration=1440)
         guild = channel.guild
         added_members = set()
@@ -111,7 +116,9 @@ class InboxCog(commands.Cog):
                         try:
                             await new_thread.add_user(member)
                             added_members.add(member.id)
-                        except Exception as e: print(f"⚠️ Thread join error: {e}")
+                            await asyncio.sleep(0.5) # Critical delay to prevent rate limiting member addition updates
+                        except Exception as e: 
+                            print(f"⚠️ Thread join error: {e}")
         return new_thread
 
     def create_mail_embed(self, record, current_index, total_count):
@@ -135,7 +142,6 @@ class InboxCog(commands.Cog):
             
         embed.add_field(name="Content", value="📝 *The message content is too long for Discord. Click the button below to read the complete mail securely.*", inline=False)
         
-        # Safe JSON attachments parsing
         import json
         attachments = record.get("attachments", "[]")
         if isinstance(attachments, str):
@@ -152,21 +158,31 @@ class InboxCog(commands.Cog):
         embed.set_footer(text=f"✧ Mail System ✧ Email {current_index + 1} of {total_count}", icon_url=embed.thumbnail.url)
         return embed
 
-    @tasks.loop(seconds=5.0)
+    # --- CHANGED: Interval adjusted to 30 seconds to respect API limits ---
+    @tasks.loop(seconds=30.0)
     async def auto_mail_checker(self):
         if not self.bot.is_ready(): return
         try:
+            # 1. Fetch data from DB first (Completely out-of-bounds from Discord API)
             latest_record = await self.fetch_latest_record()
             if not latest_record: return
 
-            record_uid = latest_record.get("uid")  # Fetch unique UUID field string
+            record_uid = latest_record.get("uid") 
 
             if self.last_checked_uid is None:
                 self.last_checked_uid = record_uid
                 return
 
+            # 2. ONLY enter Discord interaction if a brand new email dropped
             if record_uid != self.last_checked_uid:
                 self.last_checked_uid = record_uid
+                
+                # Turn status ONLINE / DND to signal active execution
+                await self.bot.change_presence(
+                    status=discord.Status.dnd, 
+                    activity=discord.Game(name="Processing New Email... 📬")
+                )
+                
                 channel = self.bot.get_channel(NOTIFY_CHANNEL_ID)
                 if channel:
                     thread_name = self.clean_recipient_name(latest_record.get("recipient") or latest_record.get("to") or "")
@@ -175,8 +191,21 @@ class InboxCog(commands.Cog):
                     embed = self.create_mail_embed(latest_record, 0, 1)
                     view = MailLinkButton(record_uid=record_uid)
                     await target_thread.send(embed=embed, view=view)
+
+                # Return back to peaceful IDLE state once done sending
+                await self.bot.change_presence(
+                    status=discord.Status.idle, 
+                    activity=discord.Game(name="Watching for updates... 👀")
+                )
         except Exception as e:
             print(f"❌ Error in auto mail checker loop: {e}")
+            # Ensure bot defaults back to safe idle visualization if something errors out
+            try:
+                await self.bot.change_presence(
+                    status=discord.Status.idle, 
+                    activity=discord.Game(name="Watching for updates... 👀")
+                )
+            except: pass
 
     @auto_mail_checker.before_loop
     async def before_checker(self): await self.bot.wait_until_ready()
@@ -206,7 +235,7 @@ class InboxCog(commands.Cog):
                     res = self.supabase.table("inbox").select("*").order("created_at", desc=True).limit(20).execute()
                     records = res.data
                 if not records:
-                    cf_rows = await self.query_cloudflare_d1("SELECT * FROM inbox ORDER BY created_at DESC LIMIT 20")
+                    cf_rows = await self.query_cloudflare_d1("SELECT * FROM inbox ORDER BY─created_at DESC LIMIT 20")
                     records = cf_rows or []
 
                 if not records: return await ctx.send("📭 No historical emails found.")

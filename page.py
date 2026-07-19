@@ -196,6 +196,12 @@ def get_base_html(title, content):
 
 @app.route('/')
 async def home():
+    # --- UPTIMEROBOT OPTIMIZATION INTERCEPTOR ---
+    # Detects automated pingers (UptimeRobot uses User-Agent strings containing 'UptimeRobot')
+    user_agent = request.headers.get('User-Agent', '')
+    if 'UptimeRobot' in user_agent:
+        return "OK", 200
+
     # Gather live statistics from your Discord bot safely
     bot_name = bot.user.name if bot.user else "Mail Notification Bot"
     avatar_url = bot.user.avatar.url if bot.user and bot.user.avatar else "https://cdn.discordapp.com/embed/avatars/0.png"
